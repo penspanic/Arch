@@ -48,11 +48,31 @@ public sealed partial class WorldTest
     [Test]
     public void WorldRecycle()
     {
-        var firstWorld = World.Create();
-        World.Destroy(firstWorld);
+        // Recycled ids are handed out FIFO, so drain the queue left behind by earlier
+        // world-churning tests to make the reuse check below deterministic. The queue can
+        // never hold more ids than the id space allocated so far, which Worlds.Length bounds.
+        var drained = new World[World.Worlds.Length];
+        for (var index = 0; index < drained.Length; index++)
+        {
+            drained[index] = World.Create();
+        }
 
-        var secondWorld = World.Create();
-        That(secondWorld.Id, Is.EqualTo(firstWorld.Id));
+        try
+        {
+            var firstWorld = World.Create();
+            World.Destroy(firstWorld);
+
+            var secondWorld = World.Create();
+            That(secondWorld.Id, Is.EqualTo(firstWorld.Id));
+            World.Destroy(secondWorld);
+        }
+        finally
+        {
+            foreach (var world in drained)
+            {
+                World.Destroy(world);
+            }
+        }
     }
 
     /// <summary>

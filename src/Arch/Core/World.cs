@@ -72,7 +72,22 @@ public partial class World
     ///     A list of all existing <see cref="Worlds"/>.
     ///     Should not be modified by the user.
     /// </summary>
-    public static World[] Worlds { get; private set; } = new World[4];
+    public static World[] Worlds
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get => _worlds;
+    }
+
+    private static World[] _worlds = new World[4];
+
+    /// <summary>
+    ///     Guards <see cref="_worlds"/>, <see cref="RecycledWorldIds"/> and world id assignment.
+    ///     A dedicated lock object: locking the array itself is unsound because the array
+    ///     reference is replaced on resize, after which concurrent creators lock different
+    ///     objects and race — duplicate world ids and lost slot writes (NREs in
+    ///     <see cref="EntityExtensions"/>, AccessViolation in <see cref="Chunk"/>).
+    /// </summary>
+    private static readonly object WorldsLock = new();
 
     /// <summary>
     ///     Stores recycled <see cref="World"/> IDs.
@@ -106,23 +121,31 @@ public partial class World
 #if PURE_ECS
         return new World(-1, chunkSizeInBytes, minimumAmountOfEntitiesPerChunk, archetypeCapacity, entityCapacity);
 #else
-        lock (Worlds)
+        lock (WorldsLock)
         {
             var recycle = RecycledWorldIds.TryDequeue(out var id);
             var recycledId = recycle ? id : WorldSize;
 
             var world = new World(recycledId, chunkSizeInBytes, minimumAmountOfEntitiesPerChunk, archetypeCapacity, entityCapacity);
 
-            // If you need to ensure a higher capacity, you can manually check and increase it
-            if (recycledId >= Worlds.Length)
+            var worlds = _worlds;
+            if (recycledId >= worlds.Length)
             {
-                var newCapacity = Worlds.Length * 2;
-                var worlds = Worlds;
-                Array.Resize(ref worlds, newCapacity);
-                Worlds = worlds;
+                // Fill the slot in the copy before publishing the new array so readers
+                // (EntityExtensions and generated accessors index Worlds without a lock,
+                // and Entity handles carry an address dependency on the array reference)
+                // never observe a published array whose contents are not yet visible on
+                // weakly-ordered CPUs (ARM64).
+                var resized = new World[worlds.Length * 2];
+                Array.Copy(worlds, resized, worlds.Length);
+                resized[recycledId] = world;
+                Volatile.Write(ref _worlds, resized);
+            }
+            else
+            {
+                Volatile.Write(ref worlds[recycledId], world);
             }
 
-            Worlds[recycledId] = world;
             Interlocked.Increment(ref worldSizeUnsafe);
             return world;
         }
@@ -533,9 +556,9 @@ public partial class World : IDisposable
         _isDisposed = true;
         var world = this;
 #if !PURE_ECS
-        lock (Worlds)
+        lock (WorldsLock)
         {
-            Worlds[world.Id] = null!;
+            Volatile.Write(ref _worlds[world.Id], null!);
             RecycledWorldIds.Enqueue(world.Id);
             Interlocked.Decrement(ref worldSizeUnsafe);
         }
