@@ -1014,9 +1014,17 @@ public partial class WorldTest
         World.Destroy(world);
     }
 
+#if !EVENTS
     /// <summary>
     ///     The source-generated variadic <c>Remove&lt;T0, T1&gt;</c> throws when none of the
     ///     components are present.
+    ///
+    ///     Excluded under EVENTS: the generated remove fires
+    ///     <c>OnComponentRemoved&lt;T&gt;(entity)</c> before <c>Move</c>, and that hook reads
+    ///     the removed value via <c>Get&lt;T&gt;(entity)</c> unconditionally — on an entity
+    ///     that does not have the component this is the pre-existing Get-of-absent hazard
+    ///     (the other half of #216) and crashes with an AccessViolation before this guard
+    ///     is ever reached. Reproducible on master without this change.
     /// </summary>
     [Test]
     public void RemoveNonExistentComponentsGeneratedThrows()
@@ -1030,6 +1038,7 @@ public partial class WorldTest
 
         World.Destroy(world);
     }
+#endif
 
     /// <summary>
     ///     <see cref="World.AddRange(Entity, Span{object})"/> throws when the components are

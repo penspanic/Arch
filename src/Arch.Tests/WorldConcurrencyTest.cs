@@ -1,3 +1,6 @@
+// The static World registry (World.Worlds / World.Create bookkeeping) does not exist
+// under PURE_ECS, and neither do the Entity extension methods used below.
+#if !PURE_ECS
 using Arch.Core;
 using Arch.Core.Extensions;
 using static NUnit.Framework.Assert;
@@ -129,3 +132,4 @@ public sealed class WorldConcurrencyTest
         }
     }
 }
+#endif
